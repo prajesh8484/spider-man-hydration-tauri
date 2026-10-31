@@ -1,14 +1,27 @@
-# 🕷️ Spider-Man Hydration Reminder (Production Desktop App)
+# 🕷️ Spider-Man Hydration Reminder (Desktop Companion)
 
-A production-ready Windows desktop hydration companion. An animated, photorealistic Spider-Man appears smoothly across your screen from different directions to remind you to stay hydrated while you work, without interrupting your workflow.
+A lightweight Windows desktop hydration companion. An animated, photorealistic Spider-Man appears smoothly across your screen from different directions to remind you to stay hydrated while you work, without interrupting your workflow.
 
 ---
 
-## Key Features
+## 📂 Repository Organization
+
+This repository contains both the reference **Electron** implementation and the ongoing migration to a high-performance **Rust (Tauri / Tower)** architecture:
+
+| Directory | Description | Status |
+| :--- | :--- | :--- |
+| **[`electron/`](file:///electron)** | Reference desktop app built with Electron + Vite + React | Production Ready |
+| **[`story/`](file:///story)** | Product specifications, user stories, and acceptance criteria | Active |
+| **[`.mdox/`](file:///.mdox)** | Agent context, system architecture, migration plan & deep-dive metrics | Active (Git-Ignored) |
+| **`tauri/`** | Target high-performance desktop companion rewritten in Rust & Tauri | Scaffolding / In Progress |
+
+---
+
+## 🚀 Key Features
 
 - **Photorealistic Spider-Man Visuals**: High-resolution movie and comic renders with realistic webbing texture, specular lighting, and pose-aware physics.
 - **8 Unique Dynamic Entrances**:
-  1. **Top Upside-Down Drop**: Drops from ceiling on a web line.
+  1. **Top Upside-Down Drop**: Drops from ceiling on an elastic web line.
   2. **Left Side Wall Crawl**: Crawls along the left monitor border.
   3. **Right Side Swing**: Pendulum web swing in from the right edge.
   4. **From the Bottom**: Climbs up over the taskbar.
@@ -16,58 +29,36 @@ A production-ready Windows desktop hydration companion. An animated, photorealis
   6. **Side Peek**: Playfully peeks from the side edge.
   7. **Ceiling Crawl**: Crawls horizontally across the top border.
   8. **High-Speed Web Zip-In**: Instant web-zip with spring bounce.
-- **Zero-Repeat Queue**: Cycles through a randomized queue of all 8 poses before reshuffling.
-- **Intelligent Hydration Cycles**:
-  - **Work Timer**: 25 min default (configurable 5–90 min).
-  - **Post-Drink Timer**: 20 min default (configurable 5–60 min).
-  - **Snooze Timer**: 5 min default (configurable 1–15 min).
-  - **Active Tracking**: Pauses countdown during system idle (> 60s) and computer sleep.
-- **Windows System Tray Companion**:
-  - Right-click menu with **💧 Drink Water**, **🕷️ Test Reminder**, **⚙️ Settings**, **⏸ Pause / Resume**, and **🚪 Exit**.
-  - Closes to tray: closing the settings modal keeps the app running quietly in the background.
-- **Auto-Start with Windows**: Toggleable Windows startup via `app.setLoginItemSettings`.
-- **Procedural Audio & Custom Sound Uploads**: High-fidelity Web Audio synthesis with support for custom MP3/WAV uploads stored in `userData`.
-- **Hydration Streak & Daily Stats**: Tracks glasses logged, reminders delivered, and daily streak.
+- **Dynamic Click-Through**: Transparent overlay passes mouse clicks through to underlying windows during idle state; captures clicks only when Spider-Man or modals are interactive.
+- **Intelligent Hydration Cycles & System Idle Tracking**: Pauses countdown during system idle (> 60s) and computer sleep.
+- **Windows System Tray Companion**: Full background operation with right-click menu (**💧 Drink Water**, **🕷️ Test Reminder**, **⚙️ Settings**, **⏸ Pause / Resume**, and **🚪 Exit**).
+- **Procedural Audio Synthesis**: Synthesized Web Audio web-thwips and hydration celebration chimes.
 
 ---
 
-## Production Installer & Executable Outputs
-
-The production binaries are located in the `release/` folder:
-
-| File | Type | Description |
-| :--- | :--- | :--- |
-| **`release/Spider-Man Hydration Setup 1.0.0.exe`** | **Windows NSIS Installer** | Installs to Windows AppData, adds Start Menu entry, Desktop shortcut, and registers in Windows Settings / Installed Apps for clean uninstall. |
-| **`release/Spider-Man Hydration Reminder 1.0.0.exe`** | **Portable Standalone `.exe`** | Single `.exe` file that runs immediately anywhere without installation. |
-| **`release/win-unpacked/`** | **Unpacked Executable Folder** | Direct folder distribution with `Spider-Man Hydration Reminder.exe`. |
-
----
-
-## Building from Source
+## ⚡ Running the Reference App (Electron)
 
 ```bash
-# 1. Start Development Server (Hot Reload)
+# Navigate to electron workspace
+cd electron
+
+# Install dependencies
+npm install
+
+# Start development overlay with hot reload
 npm start
 
-# 2. Build Production Web Assets
-npm run build
-
-# 3. Package Unpacked Windows App
-npm run pack
-
-# 4. Generate Windows Setup Installer
-npx electron-builder --win nsis
-
-# 5. Generate Portable Windows Executable
-npm run dist:portable
+# Build production Windows binaries (NSIS installer & Portable EXE)
+npm run dist:win
 ```
 
 ---
 
-## User Data & Persistence Location
+## 📊 Electron to Rust: Metrics & Architecture
 
-All user configuration, statistics, and uploaded custom sound files are stored safely in the Windows user profile:
-`%APPDATA%/spider-man-hydration-reminder/` (`app.getPath('userData')`)
-- `settings.json` — User preferences and intervals.
-- `sounds/` — Uploaded custom audio files.
-- `app.log` — Production operational logs.
+For in-depth architectural comparisons, benchmark methodology, and the step-by-step rewrite roadmap:
+- 🏛️ **System Architecture**: [`.mdox/ARCHITECTURE.md`](file:///.mdox/ARCHITECTURE.md)
+- 🗺️ **Migration Roadmap**: [`.mdox/PLAN.md`](file:///.mdox/PLAN.md)
+- 📊 **Deep-Dive Performance Metrics**: [`.mdox/METRICS.md`](file:///.mdox/METRICS.md)
+- 🔄 **Agent Context Maintenance**: [`.mdox/CONTEXT_MAINTENANCE.md`](file:///.mdox/CONTEXT_MAINTENANCE.md)
+- 📜 **User Stories**: [`story/USER_STORIES.md`](file:///story/USER_STORIES.md)

@@ -1,0 +1,32 @@
+[package]
+name = "spider-man-hydration-tauri"
+version = "1.0.0"
+description = "High-Performance Spider-Man Desktop Hydration Companion in Rust & Tauri"
+authors = ["Antigravity"]
+edition = "2021"
+
+[lib]
+name = "spider_man_hydration_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4" }
+
+[dependencies]
+tauri = { version = "2.12.5", features = ["tray-icon"] }
+tauri-plugin-log = "2"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+directories = "5.0"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Power",
+    "Win32_System_SystemInformation"
+] }

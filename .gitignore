@@ -1,9 +1,13 @@
+# Agent Context & Documentation
+.mdox/
+
 # Dependencies
 node_modules/
 
 # Build and Packaging outputs
 dist/
 release/
+target/
 *.blockmap
 builder-debug.yml
 
