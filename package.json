@@ -1,0 +1,13 @@
+{
+  "name": "spider-man-hydration-suite",
+  "version": "1.0.0",
+  "description": "Spider-Man Desktop Hydration Reminder: Electron vs. Rust (Tauri / Tower)",
+  "private": true,
+  "scripts": {
+    "start:tauri": "cd tauri && npm run tauri dev",
+    "start:electron": "cd electron && npm start",
+    "build:tauri": "cd tauri && npx @tauri-apps/cli build --bundles nsis",
+    "build:electron": "cd electron && npm run pack",
+    "bench": "powershell -ExecutionPolicy Bypass -File ./scripts/benchmark.ps1"
+  }
+}
