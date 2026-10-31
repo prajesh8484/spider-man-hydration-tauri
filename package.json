@@ -9,6 +9,7 @@
     "start:electron": "cd electron && npm start",
     "build:tauri": "cd tauri && npx @tauri-apps/cli build --bundles nsis",
     "build:electron": "cd electron && npm run pack",
-    "bench": "powershell -ExecutionPolicy Bypass -File ./scripts/benchmark.ps1"
+    "bench": "powershell -ExecutionPolicy Bypass -File ./scripts/benchmark.ps1",
+    "test:e2e": "powershell -ExecutionPolicy Bypass -File ./scripts/test-parity.ps1"
   }
 }
