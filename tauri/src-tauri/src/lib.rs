@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, WebviewWindow,
+    Emitter, Manager, WebviewWindow,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -319,6 +319,18 @@ pub fn run() {
         ])
         .setup(move |app| {
             let handle = app.handle();
+
+            // Configure Overlay Window to exact Primary Monitor Work Area
+            if let Some(main_window) = app.get_webview_window("main") {
+                if let Ok(Some(monitor)) = main_window.primary_monitor() {
+                    let pos = monitor.position();
+                    let size = monitor.size();
+                    let _ = main_window.set_position(tauri::Position::Physical(*pos));
+                    let _ = main_window.set_size(tauri::Size::Physical(*size));
+                }
+                let _ = main_window.set_shadow(false);
+                let _ = main_window.set_always_on_top(true);
+            }
 
             // Set up System Tray
             let header = MenuItemBuilder::with_id("header", "🕷️ Spider-Man Hydration")

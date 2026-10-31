@@ -20,7 +20,7 @@
         "skipTaskbar": true,
         "resizable": false,
         "fullscreen": false,
-        "maximized": true,
+        "maximized": false,
         "shadow": false
       }
     ],
