@@ -1,6 +1,20 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
+// Cache active listeners to prevent duplicate listener accumulation on React re-renders
+const activeListeners = new Map();
+
+function registerListener(eventName, callback) {
+  if (activeListeners.has(eventName)) {
+    activeListeners.get(eventName).then((unlisten) => {
+      if (typeof unlisten === 'function') unlisten();
+    });
+  }
+  const unlistenPromise = listen(eventName, (event) => callback(event.payload));
+  activeListeners.set(eventName, unlistenPromise);
+  return unlistenPromise;
+}
+
 /**
  * Tauri Bridge providing 1:1 API parity with Electron's preload window.electronAPI.
  * This ensures the exact same React components run seamlessly in both environments.
@@ -69,38 +83,15 @@ export const tauriAPI = {
     }
   },
 
-  // System Tray & Lifecycle Event Listeners
-  onTriggerReminder: (callback) => {
-    return listen('trigger-reminder', (event) => callback(event.payload));
-  },
-
-  onOpenSettings: (callback) => {
-    return listen('open-settings', () => callback());
-  },
-
-  onDrinkWater: (callback) => {
-    return listen('action-drink', () => callback());
-  },
-
-  onSnoozeReminder: (callback) => {
-    return listen('action-snooze', () => callback());
-  },
-
-  onIdleStatus: (callback) => {
-    return listen('idle-status', (event) => callback(event.payload));
-  },
-
-  onPowerSuspend: (callback) => {
-    return listen('power-suspend', () => callback());
-  },
-
-  onPowerResume: (callback) => {
-    return listen('power-resume', () => callback());
-  },
-
-  onTogglePause: (callback) => {
-    return listen('toggle-pause', (event) => callback(event.payload));
-  },
+  // System Tray & Lifecycle Event Listeners (Safe single-registration)
+  onTriggerReminder: (callback) => registerListener('trigger-reminder', callback),
+  onOpenSettings: (callback) => registerListener('open-settings', callback),
+  onDrinkWater: (callback) => registerListener('action-drink', callback),
+  onSnoozeReminder: (callback) => registerListener('action-snooze', callback),
+  onIdleStatus: (callback) => registerListener('idle-status', callback),
+  onPowerSuspend: (callback) => registerListener('power-suspend', callback),
+  onPowerResume: (callback) => registerListener('power-resume', callback),
+  onTogglePause: (callback) => registerListener('toggle-pause', callback),
 };
 
 // Expose on window.electronAPI as well so all existing React components work out of the box

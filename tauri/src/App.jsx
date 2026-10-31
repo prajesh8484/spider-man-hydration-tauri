@@ -226,7 +226,7 @@ export default function App() {
     if (window.electronAPI) {
       window.electronAPI.onTriggerReminder((forcedId) => triggerReminder(forcedId));
       window.electronAPI.onOpenSettings(() => setIsSettingsOpen(true));
-      window.electronAPI.onDrinkWater(() => handleDrink());
+      window.electronAPI.onDrinkWater(() => handleDrink(true));
       window.electronAPI.onSnoozeReminder(() => handleSnooze());
       window.electronAPI.onIdleStatus((idleSec) => setIdleSeconds(idleSec));
       window.electronAPI.onTogglePause((paused) => setIsPaused(paused));
@@ -264,8 +264,15 @@ export default function App() {
   ]);
 
   // "💧 I DRANK" Action
-  const handleDrink = () => {
-    if (appState !== STATES.REMINDER_VISIBLE) return;
+  const handleDrink = (fromTray = false) => {
+    if (appState !== STATES.REMINDER_VISIBLE && !fromTray) return;
+    if (appState !== STATES.REMINDER_VISIBLE && fromTray) {
+      soundSynth.playDrinkSuccess(settings.customSounds?.drink?.data);
+      updateStats(1, 0);
+      snoozeCountRef.current = 0;
+      setRemainingSeconds(settings.afterDrinkMinutes * 60);
+      return;
+    }
 
     setAppState(STATES.ACTION_REACTING);
     setReactionType('drink');
