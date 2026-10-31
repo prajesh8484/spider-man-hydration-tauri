@@ -52,24 +52,124 @@ impl Default for AppSettings {
                 drinks_today: 0,
                 reminders_today: 0,
                 streak_days: 1,
-                last_date: chrono_fallback_today(),
+                last_date: "Today".to_string(),
             },
         }
     }
 }
 
-fn chrono_fallback_today() -> String {
-    "Today".to_string()
+fn get_app_dir_path() -> PathBuf {
+    if let Some(proj_dirs) = ProjectDirs::from("com", "spiderman", "spider-man-hydration-reminder") {
+        let dir = proj_dirs.data_dir().to_path_buf();
+        let _ = fs::create_dir_all(&dir);
+        dir
+    } else {
+        PathBuf::from(".")
+    }
 }
 
 fn get_settings_file_path() -> PathBuf {
-    if let Some(proj_dirs) = ProjectDirs::from("com", "spiderman", "spider-man-hydration-reminder") {
-        let dir = proj_dirs.data_dir();
-        let _ = fs::create_dir_all(dir);
-        dir.join("settings.json")
-    } else {
-        PathBuf::from("settings.json")
+    get_app_dir_path().join("settings.json")
+}
+
+fn get_sounds_dir_path() -> PathBuf {
+    let dir = get_app_dir_path().join("sounds");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+// -----------------------------------------------------------------------------
+// Windows Single-Instance Lock
+// -----------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+fn ensure_single_instance() -> bool {
+    use windows::core::w;
+    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows::Win32::System::Threading::CreateMutexW;
+    unsafe {
+        let _ = CreateMutexW(None, true, w!("Global\\SpiderManHydrationSingleInstanceMutex"));
+        GetLastError() != ERROR_ALREADY_EXISTS
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ensure_single_instance() -> bool {
+    true
+}
+
+// -----------------------------------------------------------------------------
+// Windows Auto-Start via Registry (HKCU\Software\Microsoft\Windows\CurrentVersion\Run)
+// -----------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+fn is_autostart_enabled() -> bool {
+    use windows::core::w;
+    use windows::Win32::System::Registry::{RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ};
+    unsafe {
+        let mut key = Default::default();
+        let subkey = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+        if RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_READ, &mut key).is_ok() {
+            let app_name = w!("SpiderManHydration");
+            let mut buf = [0u16; 512];
+            let mut buf_len = (buf.len() * 2) as u32;
+            let status = RegQueryValueExW(
+                key,
+                app_name,
+                None,
+                None,
+                Some(buf.as_mut_ptr() as *mut _),
+                Some(&mut buf_len),
+            );
+            status.is_ok()
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_autostart_enabled() -> bool {
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn set_autostart_enabled(enabled: bool) -> bool {
+    use windows::core::w;
+    use windows::Win32::System::Registry::{
+        RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ,
+    };
+    unsafe {
+        let mut key = Default::default();
+        let subkey = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+        if RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_SET_VALUE, &mut key).is_ok() {
+            let app_name = w!("SpiderManHydration");
+            if enabled {
+                if let Ok(exe_path) = std::env::current_exe() {
+                    let exe_str = format!("\"{}\" --hidden\0", exe_path.display());
+                    let wide: Vec<u16> = exe_str.encode_utf16().collect();
+                    let wide_bytes: &[u8] = std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2);
+                    let _ = RegSetValueExW(
+                        key,
+                        app_name,
+                        0,
+                        REG_SZ,
+                        Some(wide_bytes),
+                    );
+                }
+            } else {
+                let _ = RegDeleteValueW(key, app_name);
+            }
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_autostart_enabled(_enabled: bool) -> bool {
+    false
 }
 
 // -----------------------------------------------------------------------------
@@ -100,14 +200,32 @@ fn save_settings(settings: AppSettings) -> AppSettings {
 
 #[tauri::command]
 fn get_login_item_settings() -> bool {
-    // Windows Run registry key or placeholder for desktop toggle
-    false
+    is_autostart_enabled()
 }
 
 #[tauri::command]
 fn set_login_item_settings(enabled: bool) -> bool {
-    log::info!("Auto-start with Windows toggled: {}", enabled);
-    enabled
+    set_autostart_enabled(enabled)
+}
+
+#[tauri::command]
+fn save_custom_audio(sound_type: String, base64_data: String, extension: Option<String>) -> Result<String, String> {
+    let ext = extension.unwrap_or_else(|| "mp3".to_string());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let file_name = format!("{}_{}.{}", sound_type, now, ext);
+    let sounds_dir = get_sounds_dir_path();
+    let target_path = sounds_dir.join(file_name);
+
+    use base64::Engine;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(&base64_data)
+        .map_err(|e| format!("Base64 decode error: {}", e))?;
+    fs::write(&target_path, decoded).map_err(|e| format!("File write error: {}", e))?;
+
+    Ok(format!("asset://{}", target_path.to_string_lossy().replace('\\', "/")))
 }
 
 #[tauri::command]
@@ -175,6 +293,12 @@ impl tower::Service<String> for HydrationReminderService {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Single instance mutex guard
+    if !ensure_single_instance() {
+        log::warn!("Another instance is already running. Exiting secondary instance.");
+        return;
+    }
+
     let is_paused = Arc::new(AtomicBool::new(false));
     let is_paused_for_tray = is_paused.clone();
 
@@ -189,6 +313,7 @@ pub fn run() {
             save_settings,
             get_login_item_settings,
             set_login_item_settings,
+            save_custom_audio,
             set_ignore_mouse_events,
             close_app
         ])
@@ -258,11 +383,22 @@ pub fn run() {
                 })
                 .build(handle)?;
 
-            // Background Windows Idle Monitoring Loop (Native Thread for Zero Overhead)
+            // Background Windows Idle Monitoring & Sleep/Wake Detection Loop
             let app_handle_for_idle = handle.clone();
             std::thread::spawn(move || {
+                let mut last_tick = std::time::Instant::now();
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(2));
+                    let now = std::time::Instant::now();
+                    let elapsed = now.duration_since(last_tick);
+                    last_tick = now;
+
+                    // If more than 8 seconds elapsed across a 2-second sleep, system resumed from sleep
+                    if elapsed.as_secs() > 8 {
+                        log::info!("System woke from sleep/suspend (elapsed: {}s)", elapsed.as_secs());
+                        let _ = app_handle_for_idle.emit("power-resume", ());
+                    }
+
                     let idle_sec = get_system_idle_seconds();
                     let _ = app_handle_for_idle.emit("idle-status", idle_sec);
                 }
