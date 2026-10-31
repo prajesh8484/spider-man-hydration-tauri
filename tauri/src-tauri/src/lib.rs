@@ -9,6 +9,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WebviewWindow,
 };
+use tower::{limit::RateLimit, timeout::Timeout, Service, ServiceBuilder, ServiceExt};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -173,59 +174,226 @@ fn set_autostart_enabled(_enabled: bool) -> bool {
 }
 
 // -----------------------------------------------------------------------------
-// Tauri IPC Commands
+// Tower Service Integration & Request Pipeline
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub enum HydrationRequest {
+    GetSettings,
+    SaveSettings(AppSettings),
+    RecordDrink,
+    GetAutostart,
+    SetAutostart(bool),
+    SaveCustomAudio {
+        sound_type: String,
+        base64_data: String,
+        extension: Option<String>,
+    },
+    LogEvent(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum HydrationResponse {
+    Settings(AppSettings),
+    Autostart(bool),
+    AudioSaved(Result<String, String>),
+    Logged(String),
+}
+
+#[derive(Clone, Default)]
+pub struct HydrationCommandService;
+
+impl tower::Service<HydrationRequest> for HydrationCommandService {
+    type Response = HydrationResponse;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: HydrationRequest) -> Self::Future {
+        Box::pin(async move {
+            match req {
+                HydrationRequest::GetSettings => {
+                    let path = get_settings_file_path();
+                    if path.exists() {
+                        if let Ok(content) = fs::read_to_string(&path) {
+                            if let Ok(settings) = serde_json::from_str::<AppSettings>(&content) {
+                                return Ok(HydrationResponse::Settings(settings));
+                            }
+                        }
+                    }
+                    let default_settings = AppSettings::default();
+                    let _ = fs::write(path, serde_json::to_string_pretty(&default_settings).unwrap_or_default());
+                    Ok(HydrationResponse::Settings(default_settings))
+                }
+                HydrationRequest::SaveSettings(settings) => {
+                    let path = get_settings_file_path();
+                    let _ = fs::write(path, serde_json::to_string_pretty(&settings).unwrap_or_default());
+                    Ok(HydrationResponse::Settings(settings))
+                }
+                HydrationRequest::RecordDrink => {
+                    let path = get_settings_file_path();
+                    let mut settings = if path.exists() {
+                        if let Ok(content) = fs::read_to_string(&path) {
+                            serde_json::from_str::<AppSettings>(&content).unwrap_or_default()
+                        } else {
+                            AppSettings::default()
+                        }
+                    } else {
+                        AppSettings::default()
+                    };
+                    settings.stats.drinks_today += 1;
+                    let _ = fs::write(&path, serde_json::to_string_pretty(&settings).unwrap_or_default());
+                    log::info!("[Tower Service] Drink recorded via Tower service! Total today: {}", settings.stats.drinks_today);
+                    Ok(HydrationResponse::Settings(settings))
+                }
+                HydrationRequest::GetAutostart => {
+                    let enabled = is_autostart_enabled();
+                    Ok(HydrationResponse::Autostart(enabled))
+                }
+                HydrationRequest::SetAutostart(enabled) => {
+                    let res = set_autostart_enabled(enabled);
+                    Ok(HydrationResponse::Autostart(res))
+                }
+                HydrationRequest::SaveCustomAudio {
+                    sound_type,
+                    base64_data,
+                    extension,
+                } => {
+                    let ext = extension.unwrap_or_else(|| "mp3".to_string());
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis();
+                    let file_name = format!("{}_{}.{}", sound_type, now, ext);
+                    let sounds_dir = get_sounds_dir_path();
+                    let target_path = sounds_dir.join(file_name);
+
+                    use base64::Engine;
+                    let decoded_res = base64::engine::general_purpose::STANDARD
+                        .decode(&base64_data)
+                        .map_err(|e| format!("Base64 decode error: {}", e));
+
+                    let res = match decoded_res {
+                        Ok(bytes) => match fs::write(&target_path, bytes) {
+                            Ok(_) => Ok(format!("asset://{}", target_path.to_string_lossy().replace('\\', "/"))),
+                            Err(e) => Err(format!("File write error: {}", e)),
+                        },
+                        Err(e) => Err(e),
+                    };
+                    Ok(HydrationResponse::AudioSaved(res))
+                }
+                HydrationRequest::LogEvent(msg) => {
+                    log::info!("[Tower Service] Event: {}", msg);
+                    Ok(HydrationResponse::Logged(format!("Acknowledged: {}", msg)))
+                }
+            }
+        })
+    }
+}
+
+pub type HydrationPipeline = RateLimit<Timeout<HydrationCommandService>>;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub service: Arc<tokio::sync::Mutex<Option<HydrationPipeline>>>,
+}
+
+impl AppState {
+    pub fn new() -> Self {
+        Self {
+            service: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    pub async fn dispatch(&self, req: HydrationRequest) -> Result<HydrationResponse, String> {
+        let mut svc_guard = self.service.lock().await;
+        if svc_guard.is_none() {
+            let pipeline = ServiceBuilder::new()
+                .rate_limit(50, std::time::Duration::from_secs(1))
+                .timeout(std::time::Duration::from_secs(5))
+                .service(HydrationCommandService);
+            *svc_guard = Some(pipeline);
+        }
+        let svc = svc_guard.as_mut().unwrap();
+        let ready_svc = svc.ready().await.map_err(|e| format!("Tower readiness error: {}", e))?;
+        let res = ready_svc.call(req).await.map_err(|e| format!("Tower execution error: {}", e))?;
+        Ok(res)
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Tauri IPC Commands Delegated to Tower
 // -----------------------------------------------------------------------------
 
 #[tauri::command]
-fn get_settings() -> AppSettings {
-    let path = get_settings_file_path();
-    if path.exists() {
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(settings) = serde_json::from_str::<AppSettings>(&content) {
-                return settings;
-            }
-        }
+async fn get_settings(state: tauri::State<'_, AppState>) -> Result<AppSettings, String> {
+    match state.dispatch(HydrationRequest::GetSettings).await? {
+        HydrationResponse::Settings(s) => Ok(s),
+        _ => Err("Invalid response variant for get_settings".into()),
     }
-    let default_settings = AppSettings::default();
-    let _ = fs::write(path, serde_json::to_string_pretty(&default_settings).unwrap_or_default());
-    default_settings
 }
 
 #[tauri::command]
-fn save_settings(settings: AppSettings) -> AppSettings {
-    let path = get_settings_file_path();
-    let _ = fs::write(path, serde_json::to_string_pretty(&settings).unwrap_or_default());
-    settings
+async fn save_settings(state: tauri::State<'_, AppState>, settings: AppSettings) -> Result<AppSettings, String> {
+    match state.dispatch(HydrationRequest::SaveSettings(settings)).await? {
+        HydrationResponse::Settings(s) => Ok(s),
+        _ => Err("Invalid response variant for save_settings".into()),
+    }
 }
 
 #[tauri::command]
-fn get_login_item_settings() -> bool {
-    is_autostart_enabled()
+async fn get_login_item_settings(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    match state.dispatch(HydrationRequest::GetAutostart).await? {
+        HydrationResponse::Autostart(b) => Ok(b),
+        _ => Err("Invalid response variant for get_login_item_settings".into()),
+    }
 }
 
 #[tauri::command]
-fn set_login_item_settings(enabled: bool) -> bool {
-    set_autostart_enabled(enabled)
+async fn set_login_item_settings(state: tauri::State<'_, AppState>, enabled: bool) -> Result<bool, String> {
+    match state.dispatch(HydrationRequest::SetAutostart(enabled)).await? {
+        HydrationResponse::Autostart(b) => Ok(b),
+        _ => Err("Invalid response variant for set_login_item_settings".into()),
+    }
 }
 
 #[tauri::command]
-fn save_custom_audio(sound_type: String, base64_data: String, extension: Option<String>) -> Result<String, String> {
-    let ext = extension.unwrap_or_else(|| "mp3".to_string());
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let file_name = format!("{}_{}.{}", sound_type, now, ext);
-    let sounds_dir = get_sounds_dir_path();
-    let target_path = sounds_dir.join(file_name);
+async fn save_custom_audio(
+    state: tauri::State<'_, AppState>,
+    sound_type: String,
+    base64_data: String,
+    extension: Option<String>,
+) -> Result<String, String> {
+    match state
+        .dispatch(HydrationRequest::SaveCustomAudio {
+            sound_type,
+            base64_data,
+            extension,
+        })
+        .await?
+    {
+        HydrationResponse::AudioSaved(res) => res,
+        _ => Err("Invalid response variant for save_custom_audio".into()),
+    }
+}
 
-    use base64::Engine;
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(&base64_data)
-        .map_err(|e| format!("Base64 decode error: {}", e))?;
-    fs::write(&target_path, decoded).map_err(|e| format!("File write error: {}", e))?;
+#[tauri::command]
+async fn record_drink(state: tauri::State<'_, AppState>) -> Result<AppSettings, String> {
+    match state.dispatch(HydrationRequest::RecordDrink).await? {
+        HydrationResponse::Settings(s) => Ok(s),
+        _ => Err("Invalid response variant for record_drink".into()),
+    }
+}
 
-    Ok(format!("asset://{}", target_path.to_string_lossy().replace('\\', "/")))
+#[tauri::command]
+async fn log_service_event(state: tauri::State<'_, AppState>, message: String) -> Result<String, String> {
+    match state.dispatch(HydrationRequest::LogEvent(message)).await? {
+        HydrationResponse::Logged(ack) => Ok(ack),
+        _ => Err("Invalid response variant for log_service_event".into()),
+    }
 }
 
 #[tauri::command]
@@ -267,27 +435,6 @@ fn get_system_idle_seconds() -> u32 {
 }
 
 // -----------------------------------------------------------------------------
-// Tower Service Integration
-// -----------------------------------------------------------------------------
-
-pub struct HydrationReminderService;
-
-impl tower::Service<String> for HydrationReminderService {
-    type Response = String;
-    type Error = std::convert::Infallible;
-    type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, _cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: String) -> Self::Future {
-        log::info!("Hydration Service processed request: {}", req);
-        std::future::ready(Ok(format!("Acknowledged: {}", req)))
-    }
-}
-
-// -----------------------------------------------------------------------------
 // Application Entry Point & Tray Setup
 // -----------------------------------------------------------------------------
 
@@ -303,6 +450,7 @@ pub fn run() {
     let is_paused_for_tray = is_paused.clone();
 
     tauri::Builder::default()
+        .manage(AppState::new())
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
@@ -311,9 +459,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            record_drink,
             get_login_item_settings,
             set_login_item_settings,
             save_custom_audio,
+            log_service_event,
             set_ignore_mouse_events,
             close_app
         ])
@@ -361,26 +511,37 @@ pub fn run() {
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Spider-Man Hydration Reminder 🕷️💧")
                 .menu(&menu)
-                .on_menu_event(move |app, event| match event.id.as_ref() {
-                    "drink" => {
-                        let _ = app.emit("action-drink", ());
+                .on_menu_event(move |app, event| {
+                    let app_state = app.state::<AppState>().inner().clone();
+                    match event.id.as_ref() {
+                        "drink" => {
+                            let _ = app.emit("action-drink", ());
+                            let state = app_state.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let _ = state.dispatch(HydrationRequest::LogEvent("Tray Drink Water Clicked".into())).await;
+                            });
+                        }
+                        "test" => {
+                            let _ = app.emit("trigger-reminder", ());
+                            let state = app_state.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let _ = state.dispatch(HydrationRequest::LogEvent("Tray Test Reminder Triggered".into())).await;
+                            });
+                        }
+                        "settings" => {
+                            let _ = app.emit("open-settings", ());
+                        }
+                        "pause" => {
+                            let current = is_paused_for_tray.load(Ordering::Relaxed);
+                            let next = !current;
+                            is_paused_for_tray.store(next, Ordering::Relaxed);
+                            let _ = app.emit("toggle-pause", next);
+                        }
+                        "exit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
                     }
-                    "test" => {
-                        let _ = app.emit("trigger-reminder", ());
-                    }
-                    "settings" => {
-                        let _ = app.emit("open-settings", ());
-                    }
-                    "pause" => {
-                        let current = is_paused_for_tray.load(Ordering::Relaxed);
-                        let next = !current;
-                        is_paused_for_tray.store(next, Ordering::Relaxed);
-                        let _ = app.emit("toggle-pause", next);
-                    }
-                    "exit" => {
-                        app.exit(0);
-                    }
-                    _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {

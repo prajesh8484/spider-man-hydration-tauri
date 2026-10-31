@@ -41,6 +41,24 @@ export const tauriAPI = {
     }
   },
 
+  recordDrink: async () => {
+    try {
+      return await invoke('record_drink');
+    } catch (e) {
+      console.warn('Failed to invoke record_drink via Tower service', e);
+      return null;
+    }
+  },
+
+  logServiceEvent: async (message) => {
+    try {
+      return await invoke('log_service_event', { message });
+    } catch (e) {
+      console.warn('Failed to invoke log_service_event', e);
+      return null;
+    }
+  },
+
   getLoginItemSettings: async () => {
     try {
       return await invoke('get_login_item_settings');
