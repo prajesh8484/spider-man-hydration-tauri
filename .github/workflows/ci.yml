@@ -1,0 +1,60 @@
+name: CI & Dual-Target Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-benchmark:
+    name: Build, Package & Benchmark (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: |
+            tauri/package-lock.json
+            electron/package-lock.json
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tauri/src-tauri -> target
+
+      # 1. Build and Package Tauri / Rust App
+      - name: Install Tauri Frontend Dependencies
+        working-directory: tauri
+        run: npm ci
+
+      - name: Build Tauri Web Assets
+        working-directory: tauri
+        run: npm run build
+
+      - name: Build Tauri Release Binary & NSIS Installer
+        working-directory: tauri
+        run: npx @tauri-apps/cli build --bundles nsis
+
+      # 2. Run Benchmark Scorecard
+      - name: Run Empirical Benchmark Scorecard
+        run: powershell -ExecutionPolicy Bypass -File ./scripts/benchmark.ps1
+
+      # 3. Upload Artifacts
+      - name: Upload Tauri Windows Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: spider-man-hydration-tauri-installer
+          path: tauri/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
