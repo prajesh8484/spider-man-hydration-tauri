@@ -404,6 +404,20 @@ pub fn run() {
                 }
             });
 
+            // CLI Flag Support: --test / --demo / --settings
+            let cli_args: Vec<String> = std::env::args().collect();
+            let handle_for_cli = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(1200));
+                if cli_args.iter().any(|a| a == "--test" || a == "--demo") {
+                    log::info!("CLI flag detected: triggering Spider-Man reminder animation");
+                    let _ = handle_for_cli.emit("trigger-reminder", ());
+                } else if cli_args.iter().any(|a| a == "--settings") {
+                    log::info!("CLI flag detected: opening settings modal");
+                    let _ = handle_for_cli.emit("open-settings", ());
+                }
+            });
+
             log::info!("Spider-Man Hydration Tauri Core successfully initialized");
             Ok(())
         })
