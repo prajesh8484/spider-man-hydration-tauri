@@ -115,6 +115,19 @@ export default function App() {
     loadBackendSettings();
   }, []);
 
+  // Preload and hardware-decode all Spider-Man assets into GPU memory
+  useEffect(() => {
+    SPIDERMAN_ASSETS.forEach((asset) => {
+      if (asset.src) {
+        const img = new Image();
+        img.src = asset.src;
+        if (img.decode) {
+          img.decode().catch(() => {});
+        }
+      }
+    });
+  }, []);
+
   // Sound settings sync
   useEffect(() => {
     soundSynth.setSettings(settings.enableSound, settings.volume);
