@@ -398,6 +398,35 @@ async fn log_service_event(state: tauri::State<'_, AppState>, message: String) -
 
 #[tauri::command]
 fn set_ignore_mouse_events(window: WebviewWindow, ignore: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongW, SetWindowLongW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
+            SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_TRANSPARENT,
+        };
+        if let Ok(hwnd_val) = window.hwnd() {
+            let hwnd = HWND(hwnd_val.0 as _);
+            unsafe {
+                let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                let new_style = if ignore {
+                    ex_style | WS_EX_TRANSPARENT.0 as i32
+                } else {
+                    ex_style & !(WS_EX_TRANSPARENT.0 as i32)
+                };
+                SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+                );
+            }
+        }
+    }
     window.set_ignore_cursor_events(ignore).map_err(|e| e.to_string())
 }
 

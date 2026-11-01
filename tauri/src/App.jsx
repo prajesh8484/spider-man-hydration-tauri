@@ -350,6 +350,7 @@ export default function App() {
 
   // Mouse event forwarding management
   const isAnyModalOpen = isSettingsOpen || isOnboardingOpen;
+  const isInteractive = isAnyModalOpen || appState !== STATES.IDLE_COUNTING;
 
   const handleMouseEnterInteractive = () => {
     if (window.electronAPI?.setIgnoreMouseEvents) {
@@ -358,26 +359,25 @@ export default function App() {
   };
 
   const handleMouseLeaveInteractive = () => {
-    if (!isAnyModalOpen && window.electronAPI?.setIgnoreMouseEvents) {
-      window.electronAPI.setIgnoreMouseEvents(true, { forward: true });
+    if (!isInteractive && window.electronAPI?.setIgnoreMouseEvents) {
+      window.electronAPI.setIgnoreMouseEvents(true);
     }
   };
 
   useEffect(() => {
-    if (isAnyModalOpen) {
-      window.electronAPI?.setIgnoreMouseEvents(false);
-    } else if (appState === STATES.IDLE_COUNTING) {
-      window.electronAPI?.setIgnoreMouseEvents(true, { forward: true });
+    if (window.electronAPI?.setIgnoreMouseEvents) {
+      window.electronAPI.setIgnoreMouseEvents(!isInteractive);
     }
-  }, [isAnyModalOpen, appState]);
+  }, [isInteractive]);
 
-  // Initial welcome entrance on startup
-  useEffect(() => {
-    const welcomeTimer = setTimeout(() => {
-      triggerReminder('hanging-tasm');
-    }, 800);
-    return () => clearTimeout(welcomeTimer);
-  }, []);
+  const handleBackgroundClick = (e) => {
+    // If user clicks on empty transparent viewport while Spider-Man is visible, snooze/dismiss Spider-Man
+    if (e.target === e.currentTarget && appState === STATES.REMINDER_VISIBLE) {
+      handleSnooze();
+    }
+  };
+
+  // Welcome entrance on startup only triggered when due or via --demo/--test CLI flags
 
   const isVisible = appState !== STATES.IDLE_COUNTING;
 
@@ -401,44 +401,11 @@ export default function App() {
   };
 
   return (
-    <div className="overlay-viewport relative select-none">
-      {/* Floating Companion Pill with Countdown & Settings */}
-      {!isAnyModalOpen && (
-        <div
-          className="absolute top-3 right-5 interactive transition-all duration-300 z-30"
-          onMouseEnter={handleMouseEnterInteractive}
-          onMouseLeave={handleMouseLeaveInteractive}
-        >
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-rose-500/20 shadow-lg shadow-black/10 hover:shadow-rose-500/20 hover:scale-105 transition-all text-xs font-bold text-slate-700 dark:text-slate-200">
-            <button
-              onClick={() => triggerReminder()}
-              title="Click to summon Spider-Man!"
-              className="flex items-center gap-1.5 hover:text-rose-600 transition-colors"
-            >
-              <span className="text-sm">🕷️</span>
-              {isPaused ? (
-                <span className="text-amber-500 text-[11px] font-semibold">Paused</span>
-              ) : (
-                <span className="text-sky-600 dark:text-sky-400 font-mono">
-                  {formatCountdown(remainingSeconds)}
-                </span>
-              )}
-            </button>
-            <div className="w-[1px] h-3 bg-slate-300 dark:bg-slate-700" />
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              title="Settings & Stats"
-              className="hover:text-rose-500 transition-colors p-0.5"
-            >
-              ⚙️
-            </button>
-          </div>
-        </div>
-      )}
-
+    <div className="overlay-viewport relative select-none w-screen h-screen overflow-hidden" onClick={handleBackgroundClick}>
       {/* Spider-Man Character & Speech Bubble Overlay */}
       {isVisible && (
         <div
+          onClick={(e) => e.stopPropagation()}
           className={`absolute flex transition-all duration-200 z-40 ${
             currentAsset.bubble.placement === 'left' ? 'flex-row-reverse items-center gap-3' :
             currentAsset.bubble.placement === 'right' ? 'flex-row items-center gap-3' :
